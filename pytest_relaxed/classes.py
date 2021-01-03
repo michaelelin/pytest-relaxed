@@ -92,20 +92,17 @@ class SpecClass(Class):
     def __init__(self, *args, **kwargs):
         super(SpecClass, self).__init__(*args, **kwargs)
         if isinstance(self.parent, SpecInstance) and isinstance(self.parent.parent, SpecClass):
-            self.copy_members(self.parent.parent)
+            self.extend_parent(self.parent.parent)
 
-    def copy_members(self, parent):
-        parent_class = parent.obj
-        own_class = self.obj
-        parent_members = inspect.getmembers(parent_class)
-        own_member_names = set(name for name, _ in inspect.getmembers(own_class))
-        for name, value in parent_members:
-            if name not in own_member_names:
-                if isinstance(value, six.class_types):
-                    continue
-                if isinstance(value, types.MethodType) and istestfunction(name):
-                    continue
-                setattr(own_class, name, value)
+    def extend_parent(self, parent):
+        overrides = {}
+        # Modify our class to extend the parent class
+        # Don't inherit inner classes or test methods
+        for name, value in inspect.getmembers(parent.obj):
+            if ((isinstance(value, six.class_types) and name != "__class__") or
+                    (isinstance(value, types.MethodType) and istestfunction(name))):
+                overrides[name] = None
+        self.obj = type(self.obj.__name__, (self.obj, parent.obj), overrides)
 
     def collect(self):
         items = super(SpecClass, self).collect()
