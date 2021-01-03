@@ -89,6 +89,24 @@ class SpecModule(RelaxedMixin, Module):
 # its lonesome
 class SpecClass(Class):
 
+    def __init__(self, *args, **kwargs):
+        super(SpecClass, self).__init__(*args, **kwargs)
+        if isinstance(self.parent, SpecInstance) and isinstance(self.parent.parent, SpecClass):
+            self.copy_members(self.parent.parent)
+
+    def copy_members(self, parent):
+        parent_class = parent.obj
+        own_class = self.obj
+        parent_members = inspect.getmembers(parent_class)
+        own_member_names = set(name for name, _ in inspect.getmembers(own_class))
+        for name, value in parent_members:
+            if name not in own_member_names:
+                if isinstance(value, six.class_types):
+                    continue
+                if isinstance(value, types.MethodType) and istestfunction(name):
+                    continue
+                setattr(own_class, name, value)
+
     def collect(self):
         items = super(SpecClass, self).collect()
         collected = []
@@ -102,57 +120,6 @@ class SpecClass(Class):
 
 
 class SpecInstance(RelaxedMixin, Instance):
-
-    def _getobj(self):
-        # Regular object-making first
-        obj = super(SpecInstance, self)._getobj()
-        # Then decorate it with our parent's extra attributes, allowing nested
-        # test classes to appear as an aggregate of parents' "scopes".
-        # NOTE: need parent.parent due to instance->class hierarchy
-        # NOTE: of course, skipping if we've gone out the top into a module etc
-        if (
-            not hasattr(self, "parent")
-            or not hasattr(self.parent, "parent")
-            or not isinstance(self.parent.parent, SpecInstance)
-        ):
-            return obj
-        parent_obj = self.parent.parent.obj
-        # Obtain parent attributes, etc not found on our obj (serves as both a
-        # useful identifier of "stuff added to an outer class" and a way of
-        # ensuring that we can override such attrs), and set them on obj
-        delta = set(dir(parent_obj)).difference(set(dir(obj)))
-        for name in delta:
-            value = getattr(parent_obj, name)
-            # Pytest's pytestmark attributes always get skipped, we don't want
-            # to spread that around where it's not wanted. (Besides, it can
-            # cause a lot of collection level warnings.)
-            if name == "pytestmark":
-                continue
-            # Classes get skipped; they'd always just be other 'inner' classes
-            # that we don't want to copy elsewhere.
-            if isinstance(value, six.class_types):
-                continue
-            # Functions (methods) may get skipped, or not, depending:
-            if isinstance(value, types.MethodType):
-                # If they look like tests, they get skipped; don't want to copy
-                # tests around!
-                if istestfunction(name):
-                    continue
-                # Non-test == they're probably lifecycle methods
-                # (setup/teardown) or helpers (_do_thing). Rebind them to the
-                # target instance, otherwise the 'self' in the setup/helper is
-                # not the same 'self' as that in the actual test method it runs
-                # around or within!
-                # TODO: arguably, all setup or helper methods should become
-                # autouse class fixtures (see e.g. pytest docs under 'xunit
-                # setup on steroids')
-                func = six.get_method_function(value)
-                setattr(obj, name, six.create_bound_method(func, obj))
-            # Anything else should be some data-type attribute, which is copied
-            # verbatim / by-value.
-            else:
-                setattr(obj, name, value)
-        return obj
 
     # Stub for pytest >=3.0,<3.3 where _makeitem did not exist
     def makeitem(self, *args, **kwargs):
